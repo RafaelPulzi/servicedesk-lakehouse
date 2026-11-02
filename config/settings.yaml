@@ -1,0 +1,47 @@
+# Configuração central do pipeline.
+# Tudo aqui pode ser sobrescrito por variável de ambiente (ver src/servicedesk_pipeline/config.py).
+
+project: servicedesk-lakehouse
+
+storage:
+  # backend: local | s3
+  #   local -> grava as camadas em ./data/lakehouse (ótimo para desenvolver e para CI)
+  #   s3    -> grava em s3a://<bucket>/<prefixo> (produção / Databricks)
+  backend: local
+  local_root: ./data/lakehouse
+  s3:
+    bucket: meu-bucket-lakehouse          # nome do bucket S3 (produção)
+    prefix: servicedesk                    # prefixo/pasta dentro do bucket
+    region: us-east-1
+
+  # table_format: delta | parquet
+  #   delta   -> formato de produção (Databricks, S3). Requer os JARs do Delta Lake.
+  #   parquet -> fallback sem dependência de JAR (usado no CI e em ambientes sem Maven).
+  table_format: delta
+
+spark:
+  app_name: servicedesk-lakehouse
+  master: "local[*]"        # em cluster/Databricks este valor é ignorado
+  shuffle_partitions: 8
+
+ingestion:
+  raw_format: json          # formato dos arquivos de entrada (raw)
+  tickets_per_run: 20000    # volume gerado pelo simulador de dados
+
+# SLA de resolução por prioridade (em horas). Base das métricas de aderência a SLA.
+sla_hours:
+  Crítica: 4
+  Alta: 8
+  Média: 24
+  Baixa: 72
+
+serving:
+  # Carga das marts da camada gold para um banco relacional (camada de consumo).
+  postgres:
+    enabled: true
+    host: localhost
+    port: 5432
+    database: servicedesk
+    user: servicedesk
+    password: servicedesk        # em produção use variável de ambiente PG_PASSWORD
+    schema: gold

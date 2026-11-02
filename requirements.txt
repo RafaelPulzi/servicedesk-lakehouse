@@ -1,0 +1,14 @@
+# Núcleo do pipeline
+pyspark==4.0.0
+delta-spark==4.0.0          # formato de produção (Delta Lake); requer Maven no 1º run
+PyYAML>=6.0
+
+# Camada de consumo (gold -> Postgres) e dashboard
+pandas>=2.1
+SQLAlchemy>=2.0
+psycopg2-binary>=2.9
+streamlit>=1.37
+plotly>=5.22
+
+# Qualidade / testes
+pytest>=8.0
