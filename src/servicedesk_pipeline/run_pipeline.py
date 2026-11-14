@@ -38,9 +38,10 @@ def main(argv: list[str] | None = None) -> None:
 
     # 'generate' não precisa de Spark.
     if "generate" in steps:
-        tickets = generate_data.generate_tickets(settings.tickets_per_run)
-        target = generate_data.write_raw(tickets, settings.raw_path(), settings.raw_format)
-        print(f"[generate] {len(tickets)} chamados -> {target}")
+        exports = generate_data.generate_exports(settings.tickets_per_run, cycles=settings.cycles)
+        targets = generate_data.write_raw(exports, settings.raw_path(), settings.raw_format)
+        total = sum(len(e["tickets"]) for e in exports)
+        print(f"[generate] {len(targets)} exports, {total} registros -> {settings.raw_path()}")
 
     spark = build_spark(settings)
     try:
@@ -51,8 +52,11 @@ def main(argv: list[str] | None = None) -> None:
             transform_silver.run(spark, settings)
 
         if "quality" in steps:
+            # Revalida a silver persistida. O gate principal roda DENTRO da
+            # etapa silver, antes do write (ADR 0001); este passo existe para
+            # auditar a tabela publicada ou rodar as checagens isoladamente.
             silver = read_table(spark, settings.table_path("silver", "tickets"), settings)
-            quality_checks.assert_all(quality_checks.check_silver(silver))
+            quality_checks.assert_all(quality_checks.check_silver(silver, settings))
 
         if "gold" in steps:
             transform_gold.run(spark, settings)

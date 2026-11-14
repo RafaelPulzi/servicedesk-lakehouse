@@ -39,18 +39,20 @@ settings = load_settings()
 
 # COMMAND ----------
 
-# Em produção o 'generate' seria substituído pela ingestão real (Auto Loader,
-# Kafka, etc.). Mantido aqui para o job rodar fim-a-fim em ambiente de demo.
-tickets = generate_data.generate_tickets(settings.tickets_per_run)
-generate_data.write_raw(tickets, settings.raw_path(), settings.raw_format)
+# Em produção o 'generate' seria substituído pela entrega real dos exports
+# (SFTP, Auto Loader, etc.). Mantido aqui para o job rodar fim-a-fim em demo.
+exports = generate_data.generate_exports(settings.tickets_per_run, cycles=settings.cycles)
+generate_data.write_raw(exports, settings.raw_path(), settings.raw_format)
 
 # COMMAND ----------
 
 ingest_bronze.run(spark, settings)          # noqa: F821  (spark é injetado pelo Databricks)
+# O gate de qualidade roda dentro da etapa silver, ANTES do write (ADR 0001).
 transform_silver.run(spark, settings)        # noqa: F821
 
+# Revalidação da silver publicada (auditoria).
 silver = read_table(spark, settings.table_path("silver", "tickets"), settings)  # noqa: F821
-quality_checks.assert_all(quality_checks.check_silver(silver))
+quality_checks.assert_all(quality_checks.check_silver(silver, settings))
 
 transform_gold.run(spark, settings)          # noqa: F821
 
