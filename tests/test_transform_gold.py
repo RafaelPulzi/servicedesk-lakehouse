@@ -1,31 +1,56 @@
-"""Testes das marts gold (modelo dimensional + window functions)."""
+"""Testes das marts gold (marts por ciclo + window functions)."""
 from __future__ import annotations
 
 from servicedesk_pipeline.transform_gold import build_gold
 from servicedesk_pipeline.transform_silver import clean
 
 
+def _row(**overrides) -> dict:
+    base = {
+        "ticket_id": "CH0", "opened_at": "2026-03-01T09:00:00",
+        "closed_at": "2026-03-01T11:00:00", "channel": "Portal",
+        "category": "Rede", "priority": "Média", "technician_id": "T100",
+        "technician_name": "T100", "requester_id": "U1", "site": "SP",
+        "status": "Resolvido", "first_response_minutes": 5,
+        "resolution_minutes": 120, "satisfaction_score": 5, "reopened": False,
+        "export_date": "2026-04-30T23:59:59", "_ingested_at": "2026-05-01T00:00:00",
+    }
+    base.update(overrides)
+    return base
+
+
 def _silver(spark, settings):
     rows = [
-        {
-            "ticket_id": f"CH{i}", "opened_at": f"2026-03-0{d}T09:00:00",
-            "closed_at": f"2026-03-0{d}T10:00:00", "channel": "Portal",
-            "category": cat, "priority": prio, "technician_id": tech,
-            "technician_name": tech, "requester_id": "U1", "site": "SP",
-            "status": "Resolvido", "first_response_minutes": 5,
-            "resolution_minutes": mins, "satisfaction_score": sat,
-            "reopened": reopened, "export_date": "2026-03-31T23:59:59",
-            "_ingested_at": "2026-04-01T00:00:00",
-        }
-        for i, (d, cat, prio, tech, mins, sat, reopened) in enumerate(
-            [
-                (1, "Rede", "Crítica", "T100", 120, 5, False),   # fora SLA? 2h<=4h -> dentro
-                (1, "Rede", "Crítica", "T100", 600, 4, True),    # 10h>4h -> fora, reaberto
-                (2, "Software", "Média", "T101", 120, 3, False), # 2h<=24h -> dentro
-                (2, "Software", "Média", "T100", 100, 5, False), # dentro
-                (3, "Rede", "Baixa", "T101", 100, 2, False),     # dentro (72h)
-            ]
-        )
+        # ----- competência 2026-03 -----
+        # dentro do SLA (Crítica: 2h <= 4h)
+        _row(ticket_id="CH1", priority="Crítica", technician_id="T100",
+             technician_name="T100", resolution_minutes=120),
+        # fora do SLA (Crítica: 10h > 4h), reaberto
+        _row(ticket_id="CH2", priority="Crítica", technician_id="T100",
+             technician_name="T100", closed_at="2026-03-01T19:00:00",
+             resolution_minutes=600, satisfaction_score=4, reopened=True),
+        # dentro do SLA (Média: 2h <= 24h)
+        _row(ticket_id="CH3", category="Software", technician_id="T101",
+             technician_name="T101", satisfaction_score=3),
+        # cancelado: conta no volume, fora das métricas de SLA/satisfação
+        _row(ticket_id="CH4", status="Cancelado", technician_id="T101",
+             technician_name="T101", resolution_minutes=None,
+             satisfaction_score=None),
+        # ----- competência 2026-04 -----
+        # aberto há ~360h (desde 15/abr até a referência 30/abr): estourou a Média (24h)
+        _row(ticket_id="CH5", opened_at="2026-04-15T12:00:00", status="Aberto",
+             closed_at=None, first_response_minutes=None,
+             resolution_minutes=None, satisfaction_score=None,
+             technician_id="T101", technician_name="T101"),
+        # aberto há ~12h (30/abr 11:00 -> 23:59): ainda dentro do prazo da Média
+        _row(ticket_id="CH6", opened_at="2026-04-30T11:00:00", status="Aberto",
+             closed_at=None, first_response_minutes=None,
+             resolution_minutes=None, satisfaction_score=None,
+             technician_id="T100", technician_name="T100"),
+        # resolvido dentro do SLA em abril
+        _row(ticket_id="CH7", opened_at="2026-04-02T09:00:00",
+             closed_at="2026-04-02T10:00:00", resolution_minutes=60,
+             technician_id="T100", technician_name="T100"),
     ]
     return clean(spark.createDataFrame(rows), settings)
 
@@ -33,41 +58,74 @@ def _silver(spark, settings):
 def test_marts_existem(spark, settings):
     models = build_gold(_silver(spark, settings))
     assert set(models) == {
-        "fato_chamados", "dim_tecnico", "mart_sla_categoria",
-        "mart_volume_diario", "mart_kpi_geral",
+        "fato_chamados", "mart_kpi_ciclo", "mart_produtividade_tecnico",
+        "mart_sla_categoria", "mart_volume_diario",
     }
 
 
-def test_fato_tem_grao_de_ticket(spark, settings):
+def test_fato_tem_grao_de_ticket_e_colunas_de_backlog(spark, settings):
     silver = _silver(spark, settings)
     fato = build_gold(silver)["fato_chamados"]
     assert fato.count() == silver.count()
+    assert {"competencia", "data_referencia", "horas_em_aberto", "backlog_estourado"} <= set(fato.columns)
 
 
-def test_dim_tecnico_agrega_e_rankeia(spark, settings):
-    dim = build_gold(_silver(spark, settings))["dim_tecnico"]
-    por_tech = {r["technician_id"]: r for r in dim.collect()}
-    # T100 tem 3 chamados, T101 tem 2 -> T100 é rank 1 de volume
-    assert por_tech["T100"]["total_chamados"] == 3
-    assert por_tech["T101"]["total_chamados"] == 2
-    assert por_tech["T100"]["rank_volume"] == 1
+def test_backlog_estourado_mede_contra_data_de_referencia(spark, settings):
+    fato = build_gold(_silver(spark, settings))["fato_chamados"]
+    por_id = {r["ticket_id"]: r for r in fato.collect()}
+    assert por_id["CH5"]["backlog_estourado"] is True    # ~360h > 24h
+    assert por_id["CH6"]["backlog_estourado"] is False   # ~13h <= 24h
+    assert por_id["CH6"]["horas_em_aberto"] is not None
+    # encerrados não são backlog
+    assert por_id["CH1"]["backlog_estourado"] is False
+    assert por_id["CH1"]["horas_em_aberto"] is None
 
 
-def test_sla_categoria_participacao_soma_100(spark, settings):
+def test_kpi_ciclo_uma_linha_por_competencia(spark, settings):
+    kpi = build_gold(_silver(spark, settings))["mart_kpi_ciclo"]
+    por_ciclo = {r["competencia"]: r for r in kpi.collect()}
+    assert set(por_ciclo) == {"2026-03", "2026-04"}
+    marco = por_ciclo["2026-03"]
+    assert marco["total_chamados"] == 4
+    assert marco["resolvidos"] == 3
+    assert marco["cancelados"] == 1
+    assert marco["backlog"] == 0
+    abril = por_ciclo["2026-04"]
+    assert abril["total_chamados"] == 3
+    assert abril["backlog"] == 2
+    assert abril["backlog_estourado"] == 1
+
+
+def test_cancelados_fora_do_universo_do_sla(spark, settings):
+    kpi = build_gold(_silver(spark, settings))["mart_kpi_ciclo"]
+    marco = {r["competencia"]: r for r in kpi.collect()}["2026-03"]
+    # 3 resolvidos: CH1 dentro, CH2 fora, CH3 dentro -> 66.7%. Se o cancelado
+    # CH4 entrasse no denominador como "fora", daria 50%.
+    assert abs(float(marco["pct_dentro_sla"]) - 66.7) < 0.1
+
+
+def test_produtividade_rankeia_dentro_do_ciclo(spark, settings):
+    mart = build_gold(_silver(spark, settings))["mart_produtividade_tecnico"]
+    por_chave = {(r["competencia"], r["technician_id"]): r for r in mart.collect()}
+    # março: T100 resolveu 2, T101 resolveu 1
+    assert por_chave[("2026-03", "T100")]["resolvidos"] == 2
+    assert por_chave[("2026-03", "T100")]["rank_volume"] == 1
+    assert por_chave[("2026-03", "T101")]["rank_volume"] == 2
+    # abril: T100 resolveu 1, T101 nenhum — ranking é por ciclo, não global
+    assert por_chave[("2026-04", "T100")]["rank_volume"] == 1
+
+
+def test_sla_categoria_participacao_soma_100_por_ciclo(spark, settings):
     mart = build_gold(_silver(spark, settings))["mart_sla_categoria"]
-    total_pct = sum(float(r["pct_do_volume_total"]) for r in mart.collect())
-    assert abs(total_pct - 100.0) < 0.5  # tolerância de arredondamento
-
-
-def test_kpi_geral_linha_unica(spark, settings):
-    kpi = build_gold(_silver(spark, settings))["mart_kpi_geral"].collect()
-    assert len(kpi) == 1
-    assert kpi[0]["total_chamados"] == 5
-    assert kpi[0]["tecnicos_ativos"] == 2
+    somas: dict[str, float] = {}
+    for r in mart.collect():
+        somas[r["competencia"]] = somas.get(r["competencia"], 0.0) + float(r["pct_do_volume_no_ciclo"])
+    for ciclo, total in somas.items():
+        assert abs(total - 100.0) < 0.5, ciclo  # tolerância de arredondamento
 
 
 def test_volume_diario_tem_media_movel(spark, settings):
     mart = build_gold(_silver(spark, settings))["mart_volume_diario"]
     assert "media_movel_7d" in mart.columns
-    # 3 dias distintos (01, 02, 03 de março)
-    assert mart.count() == 3
+    # dias distintos: 01/mar, 02/abr, 15/abr, 30/abr
+    assert mart.count() == 4

@@ -12,12 +12,14 @@ from pyspark.sql import SparkSession
 from .config import Settings
 from .io_utils import read_table
 
-# Marts publicadas no banco de consumo.
+# Tabelas publicadas no banco de consumo. O fato vai junto: é pequeno (1 linha
+# por chamado) e dá drill-down ao dashboard ("quais chamados estouraram?").
 SERVED_TABLES = (
-    "mart_kpi_geral",
+    "mart_kpi_ciclo",
     "mart_sla_categoria",
     "mart_volume_diario",
-    "dim_tecnico",
+    "mart_produtividade_tecnico",
+    "fato_chamados",
 )
 
 
@@ -36,6 +38,10 @@ def run(spark: SparkSession, settings: Settings) -> None:
     for table in SERVED_TABLES:
         sdf = read_table(spark, settings.table_path("gold", table), settings)
         pdf = sdf.toPandas()
+        # `replace` derruba e recria a tabela: o dashboard vê um vão de alguns
+        # segundos durante a carga. Aceitável para um job de ciclo nessa
+        # escala; com consumo contínuo, o upgrade é carregar em staging e
+        # trocar com RENAME numa transação.
         pdf.to_sql(
             table,
             engine,
