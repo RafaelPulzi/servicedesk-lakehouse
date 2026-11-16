@@ -12,6 +12,7 @@ Variáveis de ambiente reconhecidas:
     S3_PREFIX           -> storage.s3.prefix
     AWS_REGION          -> storage.s3.region
     TICKETS_PER_RUN     -> ingestion.tickets_per_run
+    CYCLES              -> ingestion.cycles
     PG_ENABLED          -> serving.postgres.enabled  (true | false)
     PG_HOST/PG_PORT/PG_DATABASE/PG_USER/PG_PASSWORD/PG_SCHEMA
 """
@@ -76,6 +77,11 @@ class Settings:
     @property
     def tickets_per_run(self) -> int:
         return int(os.getenv("TICKETS_PER_RUN", self.raw["ingestion"]["tickets_per_run"]))
+
+    @property
+    def cycles(self) -> int:
+        """Quantidade de ciclos (exports mensais) simulados pelo gerador."""
+        return int(os.getenv("CYCLES", self.raw["ingestion"].get("cycles", 6)))
 
     # --- spark ---------------------------------------------------------
     @property

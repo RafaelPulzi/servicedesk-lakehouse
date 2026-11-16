@@ -26,7 +26,8 @@ spark:
 
 ingestion:
   raw_format: json          # formato dos arquivos de entrada (raw)
-  tickets_per_run: 20000    # volume gerado pelo simulador de dados
+  tickets_per_run: 20000    # chamados simulados ao longo do período
+  cycles: 6                 # exports mensais gerados pelo simulador (1 arquivo raw por ciclo)
 
 # SLA de resolução por prioridade (em horas). Base das métricas de aderência a SLA.
 sla_hours:

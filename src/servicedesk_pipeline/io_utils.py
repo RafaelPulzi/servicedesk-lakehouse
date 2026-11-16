@@ -21,7 +21,7 @@ def write_table(
     writer = df.write.format(settings.table_format).mode(mode)
     if partition_by:
         writer = writer.partitionBy(*partition_by)
-    if settings.table_format == "delta":
+    if settings.table_format == "delta" and mode == "overwrite":
         writer = writer.option("overwriteSchema", "true")
     writer.save(path)
 
