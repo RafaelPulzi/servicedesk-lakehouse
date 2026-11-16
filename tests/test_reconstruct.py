@@ -71,6 +71,15 @@ def _bronze(spark):
     return spark.createDataFrame(rows)
 
 
+def _ts(spark, iso: str):
+    """O timestamp como o Spark o devolve na coleta.
+
+    Comparar timestamps coletados com strings de data depende do fuso da
+    máquina do driver; parsear o esperado pelo mesmo caminho não depende.
+    """
+    return spark.sql(f"SELECT timestamp'{iso.replace('T', ' ')}'").collect()[0][0]
+
+
 def _fato_por_id(edicao):
     return {r["ticket_id"]: r for r in edicao.models["fato_chamados"].collect()}
 
@@ -94,7 +103,8 @@ def test_backlog_estourado_medido_contra_a_referencia_do_ciclo(spark, settings):
     jan = _fato_por_id(reconstruct_edition(bronze, "2026-01", settings))
     fev = _fato_por_id(reconstruct_edition(bronze, "2026-02", settings))
     # a data de referência da edição é a do export do ciclo, não a mais recente
-    assert jan["CH2"]["data_referencia"].strftime("%Y-%m-%d") == "2026-01-31"
+    assert jan["CH2"]["data_referencia"] == _ts(spark, EXPORT_JAN)
+    assert fev["CH2"]["data_referencia"] == _ts(spark, EXPORT_FEV)
     # na época (~14h em aberto) CH2 ainda estava dentro do prazo da Média (24h)
     assert jan["CH2"]["backlog_estourado"] is False
     # contra a referência de fevereiro (~28 dias) já tinha estourado
