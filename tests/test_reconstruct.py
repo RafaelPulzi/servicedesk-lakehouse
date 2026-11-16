@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from servicedesk_pipeline import reconstruct
+from servicedesk_pipeline import reconstruct, run_pipeline
 from servicedesk_pipeline.config import load_settings
 from servicedesk_pipeline.io_utils import read_table, write_table
 from servicedesk_pipeline.reconstruct import CicloSemExportError, reconstruct_edition
@@ -147,6 +147,28 @@ def test_smoke_run_publica_edicao_em_gold_sufixada_pelo_ciclo(spark, tmp_path):
         df = read_table(spark, s.table_path("gold", f"{nome}_2026-01"), s)
         assert df.count() > 0, nome
     # a visão atual da gold não é tocada
+    assert not (tmp_path / "gold" / "fato_chamados").exists()
+
+
+def test_smoke_cli_reconstruir_ciclo_executa_somente_a_reconstrucao(
+    spark, tmp_path, monkeypatch
+):
+    """Smoke da opção de CLI (padrão do repo): --reconstruir-ciclo YYYY-MM."""
+    monkeypatch.setenv("STORAGE_BACKEND", "local")
+    monkeypatch.setenv("TABLE_FORMAT", "parquet")
+    monkeypatch.setenv("LOCAL_ROOT", str(tmp_path))
+    s = load_settings()
+    write_table(_bronze(spark), s.table_path("bronze", "tickets"), s)
+    # Reaproveita a sessão dos testes em vez de criar (e parar) uma nova.
+    monkeypatch.setattr(run_pipeline, "build_spark", lambda _settings: spark)
+    monkeypatch.setattr(spark, "stop", lambda: None)
+
+    run_pipeline.main(["--reconstruir-ciclo", "2026-01"])
+
+    df = read_table(spark, s.table_path("gold", "fato_chamados_2026-01"), s)
+    assert df.count() > 0
+    # executa SOMENTE a reconstrução: nenhum outro passo roda
+    assert not (tmp_path / "silver").exists()
     assert not (tmp_path / "gold" / "fato_chamados").exists()
 
 

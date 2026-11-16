@@ -20,6 +20,10 @@ _Avoid_: carga incremental, delta
 O período de competência do relatório gerencial: um mês. Cada ciclo corresponde a um export da origem e a uma edição do relatório.
 _Avoid_: rodada, sprint
 
+**Edição**:
+O relatório gerencial de um ciclo como foi publicado: derivado somente dos exports conhecidos até a data de referência daquele ciclo. A edição mais recente coincide com a visão atual; edições passadas são reconstruídas a partir da bronze ("como publicado") e gravadas em tabelas gold sufixadas pelo ciclo.
+_Avoid_: snapshot, versão do relatório
+
 **SLA**:
 O prazo máximo de resolução de um chamado, em horas, determinado exclusivamente pela sua prioridade.
 
