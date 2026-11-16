@@ -23,10 +23,12 @@ from __future__ import annotations
 
 from typing import NamedTuple
 
-from pyspark.sql import DataFrame
+from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
+from . import quality_checks
 from .config import Settings
+from .io_utils import read_table, write_table
 from .transform_gold import build_gold
 from .transform_silver import clean
 
@@ -69,3 +71,24 @@ def reconstruct_edition(bronze: DataFrame, ciclo: str, settings: Settings) -> Ed
 
     silver = clean(bronze_cortada, settings)
     return Edicao(ciclo=ciclo, silver=silver, models=build_gold(silver))
+
+
+def run(spark: SparkSession, settings: Settings, ciclo: str) -> Edicao:
+    """Reconstrói a edição do `ciclo` a partir da bronze e publica na gold.
+
+    As tabelas da edição vão para a camada gold com nomes sufixados pelo
+    ciclo (ex.: ``fato_chamados_2026-01``) — re-executável: overwrite da
+    própria edição. A visão atual da gold e o Postgres não são tocados.
+    """
+    bronze = read_table(spark, settings.table_path("bronze", "tickets"), settings)
+    edicao = reconstruct_edition(bronze, ciclo, settings)
+
+    # Gate de qualidade sobre a silver reconstruída ANTES de qualquer escrita
+    # (ADR 0001): falhou, nada da edição é publicado.
+    quality_checks.assert_all(quality_checks.check_silver(edicao.silver, settings))
+
+    for name, df in edicao.models.items():
+        target = settings.table_path("gold", f"{name}_{ciclo}")
+        write_table(df, target, settings, mode="overwrite")
+        print(f"[reconstruct] {name}_{ciclo}: {df.count()} linhas -> {target}")
+    return edicao

@@ -9,6 +9,9 @@ from __future__ import annotations
 
 import pytest
 
+from servicedesk_pipeline import reconstruct
+from servicedesk_pipeline.config import load_settings
+from servicedesk_pipeline.io_utils import read_table, write_table
 from servicedesk_pipeline.reconstruct import CicloSemExportError, reconstruct_edition
 from servicedesk_pipeline.transform_gold import build_gold
 from servicedesk_pipeline.transform_silver import clean
@@ -126,6 +129,25 @@ def test_expoe_a_silver_reconstruida(spark, settings):
     # a silver da edição tem a última versão DENTRO do universo do ciclo
     assert set(por_id) == {"CH1", "CH2", "CH3"}
     assert por_id["CH1"]["status"] == "Em Andamento"
+
+
+def test_smoke_run_publica_edicao_em_gold_sufixada_pelo_ciclo(spark, tmp_path):
+    """Smoke do `run` com IO (padrão do repo): bronze -> gold da edição."""
+    s = load_settings()
+    s.raw["storage"]["table_format"] = "parquet"
+    s.raw["storage"]["backend"] = "local"
+    s.raw["storage"]["local_root"] = str(tmp_path)
+    write_table(_bronze(spark), s.table_path("bronze", "tickets"), s)
+
+    reconstruct.run(spark, s, "2026-01")
+
+    # todas as tabelas da edição, sufixadas pelo ciclo
+    for nome in ("fato_chamados", "mart_kpi_ciclo", "mart_produtividade_tecnico",
+                 "mart_sla_categoria", "mart_volume_diario"):
+        df = read_table(spark, s.table_path("gold", f"{nome}_2026-01"), s)
+        assert df.count() > 0, nome
+    # a visão atual da gold não é tocada
+    assert not (tmp_path / "gold" / "fato_chamados").exists()
 
 
 def test_ciclo_sem_export_levanta_erro_com_ciclos_disponiveis(spark, settings):
